@@ -1,0 +1,65 @@
+name: PHP Composer
+env:
+  EB_APPLICATION_NAME: "eSIM2Go"
+  EB_ENVIRONMENT_NAME: "eSIM2Go-API"
+  DEPLOY_PACKAGE_NAME: "esim2go_api-${{ github.sha }}.zip"
+  AWS_REGION_NAME: "eu-central-1"
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  ci_pipeline:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout master
+      - uses: actions/checkout@v2
+
+      - name: Validate composer.json and composer.lock
+        run: composer validate
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-progress --no-suggest
+        
+      - name: Config application
+        run: |
+          cp .env.example .env
+          php artisan cache:clear
+          php artisan config:clear
+          php artisan key:generate
+
+      - name: Create ZIP deployment package
+        run: zip -r ${{ env.DEPLOY_PACKAGE_NAME }} * .[^.]* -x "vendor/*"
+
+      - name: Get timestamp
+        uses: gerred/actions/current-time@master
+        id: current-time
+
+      - name: Run string replace
+        uses: frabert/replace-string-action@master
+        id: format-time
+        with:
+          pattern: '[:\.]+'
+          string: "${{ steps.current-time.outputs.time }}"
+          replace-with: "-"
+          flags: "g"
+          
+      - name: Configure AWS Credentials & Deploy
+        uses: einaregilsson/beanstalk-deploy@v10
+        with:
+          aws_access_key: ${{ secrets.AWS_ACCESS_KEY }}
+          aws_secret_key: ${{ secrets.AWS_SECRET_KEY }}
+          region: ${{ env.AWS_REGION_NAME }}
+          application_name: ${{ env.EB_APPLICATION_NAME}}
+          environment_name: ${{ env.EB_ENVIRONMENT_NAME}}
+          version_label: "esim2go-api-${{ steps.format-time.outputs.replaced }}-${{ github.sha }}"
+          deployment_package: ${{ env.DEPLOY_PACKAGE_NAME }}
+          wait_for_deployment: false
+          version_description: ${{ github.sha }}
+
+      - name: Deployed!
+        run: echo App deployed to ELB
